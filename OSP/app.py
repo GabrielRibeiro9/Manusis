@@ -22,15 +22,21 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
     lancamentos_realizados = 0
     wait = WebDriverWait(driver, 10)
 
+#  Abre uma nova janela de ordem de serviço no Manusis e faz todos os lançamentos
+#  de colaboradores para aquele grupo específico de uma mesma OS.   
+
     try:
+# Garante que estamos na janela principal antes de clicar para abrir nova OS        
         driver.switch_to.window(driver.window_handles[0])
         botao_abrir_ordem = wait.until(
             EC.element_to_be_clickable((By.XPATH, '//a[contains(@href, "abre_janela_apontaosplan")]'))
         )
         botao_abrir_ordem.click()
+# Aguarda até que uma nova janela seja aberta        
         WebDriverWait(driver, 10).until(lambda d: len(d.window_handles) > 1)
         driver.switch_to.window(driver.window_handles[-1])
         sleep(3)
+# Recupera o valor do grupo da primeira linha do conjunto de 'linhas'        
         grupo_raw = linhas[0][header.index("GRUPO")]
         if grupo_raw is None or str(grupo_raw).strip() == "":
             raise ValueError(f"Grupo inválido detectado na OSP {num_os}, linhas: {len(linhas)}")
@@ -50,7 +56,7 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
                                       else str(l[header.index("hor_ini_real")]), "%H:%M:%S")
             )
         )
-
+# Pega a linha “base” (primeiro colaborador a executar)
         base = linhas_ordenadas[0]
         ini_exec_real = base[header.index("ini_exec_real")]
         hor_ini_real = base[header.index("hor_ini_real")]
@@ -64,7 +70,7 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
         colaborador_base = base[header.index("COLABORADOR")]
         log(f"Base da OSP {num_os}, grupo {grupo}: colaborador {colaborador_base} - {ini_exec_real.strftime('%d/%m/%Y')} {hor_ini_real}")
 
-        # Preenche DATA_PROG, DATA_ABRE, HORA_ABRE com o colaborador base
+# Preenche DATA_PROG, DATA_ABRE, HORA_ABRE com o colaborador base
         data_prog = wait.until(EC.presence_of_element_located((By.ID, "DATA_PROG")))
         data_prog.click()
         data_prog.send_keys(Keys.CONTROL + "a")
@@ -83,7 +89,7 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
         hora_abre.send_keys(Keys.DELETE)
         hora_abre.send_keys(hor_ini_real.strftime("%H:%M:%S"))
 
-        # Patrimonio e seleção da máquina
+# Patrimonio e seleção da máquina
         patrimonio_input = driver.find_element(By.ID, "campo_filtro_cc[MID_MAQUINA]")
         patrimonio_input.clear()
         patrimonio_input.send_keys(str(patrimonio))
@@ -91,7 +97,7 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
         patrimonio_input.send_keys(Keys.ENTER)
         sleep(1)
         patrimonio_input.send_keys(Keys.ENTER)
-
+# Aguarda até que a lista de máquinas seja carregada
         WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.XPATH, '//select[@id="cc[MID_MAQUINA]"]/option[not(@value="0")]'))
         )
@@ -100,7 +106,7 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
         select_maquina = Select(driver.find_element(By.ID, "cc[MID_MAQUINA]"))
         select_maquina.select_by_index(1)
         sleep(2)
-
+# Preenche informações fixas na OS
         driver.find_element(By.ID, "cc[SOLICITANTE]").send_keys("MANUFATURA")
         sleep(2)
         driver.find_element(By.ID, "cc[RESPONSAVEL]").send_keys(str(re))
@@ -117,12 +123,14 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
         sleep(2)
 
         def selecionar_opcao_parcial(select_element, texto_planilha):
+# Percorre as opções de um <select> e seleciona aquela cujo texto
+# contém, parcialmente, o valor passado em texto_planilha.            
             for option in select_element.options:
                 if texto_planilha.strip().lower() in option.text.strip().lower():
                     select_element.select_by_visible_text(option.text)
                     return option.text
             raise ValueError(f"Opção '{texto_planilha}' não encontrada no dropdown.")
-
+# Tenta selecionar os dropdowns de Causa, Defeito e Solução
         try:
             WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cc[CAUSA]")))
             WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cc[DEFEITO]")))
@@ -147,16 +155,17 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
 
         sleep(0.5)
 
-        # Lançar todos colaboradores do grupo
+# Lançar todos colaboradores do grupo
         for linha in linhas:
             status = linha[header.index("STATUS MANUSIS")]
             grupo_linha = str(linha[header.index("GRUPO")]).strip()
+# Só processa se o status estiver 'PENDENTE' e pertencer ao mesmo grupo            
             if status == "PENDENTE" and grupo_linha == grupo:
                 colaborador = linha[header.index("COLABORADOR")]
                 ini_exec_real = linha[header.index("ini_exec_real")]
                 hor_ini_real = linha[header.index("hor_ini_real")]
                 fim_exec_real = linha[header.index("fim_exec_real")]
-
+# Preenche dados de apontamento do colaborador
                 driver.find_element(By.ID, "func").send_keys(str(colaborador))
                 sleep(1)
                 driver.find_element(By.ID, "fdatai").clear()
@@ -180,6 +189,7 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
                 sleep(2)
 
                 try:
+# Se houver conflito de horário, ajusta adicionando 1 segundo                    
                     WebDriverWait(driver, 3).until(
                         EC.visibility_of_element_located((By.XPATH, "//*[contains(text(), 'Esse Funcionário já possui apontamento nesse período')]"))
                     )
@@ -206,7 +216,7 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
                     log(f"Lançamento sem conflitos para {colaborador}")
                     sleep(2)
 
-        # Salvar a ordem
+# Salvar a ordem de servico principal
         try:
             botao_salvar_ordem = wait.until(
                 EC.element_to_be_clickable((By.NAME, "gravaos"))
@@ -217,21 +227,33 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
         except Exception as e:
             log(f"Erro ao tentar salvar a OSP {num_os}: {e}")
 
-        # Pegar número da ordem gerada
+# Pegar número da ordem gerada
         num_ordem_input = wait.until(EC.presence_of_element_located((By.ID, "osnum")))
         num_ordem = num_ordem_input.get_attribute("value")
         log(f"OSP gerada com sucesso: {num_ordem}")
 
-        # Atualizar planilha
+# Atualizar planilha
         OSP = openpyxl.load_workbook('./ACOMPANHAMENTO SERVIÇOS MANUSIS.xlsx', data_only=False)
         pagina_OSP = OSP['LOGIX X MANUSIS-OSP']
+
         for i, row in enumerate(pagina_OSP.iter_rows(min_row=2), start=2):
             if row[header.index("num_os")].value == num_os and str(row[header.index("GRUPO")].value).strip() == grupo:
-                pagina_OSP.cell(row=i, column=header.index("ORDEM ELECTROLUX") + 1).value = num_ordem
+                
+# Tenta converter para numero inteiro antes de gravar        
+                try:
+                    valor_ordem = int(num_ordem)
+                    cell_ord = pagina_OSP.cell(row=i, column=header.index("ORDEM ELECTROLUX") + 1)
+                    cell_ord.value = valor_ordem
+
+                except ValueError:
+# Se não for possível converter, grava como texto:
+                    pagina_OSP.cell(row=i, column=header.index("ORDEM ELECTROLUX") + 1).value = num_ordem
+# Atualiza STATUS MANUSIS para “REALIZADO”
                 pagina_OSP.cell(row=i, column=header.index("STATUS MANUSIS") + 1).value = "REALIZADO"
+# Salva planilha 
         OSP.save('./ACOMPANHAMENTO SERVIÇOS MANUSIS.xlsx')
 
-        # Fecha ordem
+# Fecha ordem de servico, clica em "Fechar OS"
         checkbox_fecha_os = wait.until(EC.element_to_be_clickable((By.NAME, "fechaos")))
         checkbox_fecha_os.click()
         log("Checkbox 'Fechar OS' marcada.")
@@ -241,7 +263,7 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
         botao_salvar_ordem = wait.until(EC.element_to_be_clickable((By.NAME, "gravaos")))
         botao_salvar_ordem.click()
         log("Botão 'Fechar OS' clicado com sucesso.")
-
+# Volta para a janela principal
         driver.switch_to.window(driver.window_handles[0])
 
     except Exception as e:
@@ -259,7 +281,7 @@ def rodar_automacao(log):
         driver.get('http://electrolux.manusis.com.br/portal/')
         sleep(5)
 
-# - Clicar na opcao FERRAMENTAL
+# Clicar na opcao FERRAMENTAL
         log("Selecionando sistema Ferramental")
 
         select_ferramental = driver.find_element(By.ID, "combo_sistemas")
@@ -268,86 +290,83 @@ def rodar_automacao(log):
 
         select_ferramental.select_by_visible_text("Ferramental")
 
-# - Digitar login
+# Digitar login
         login = driver.find_element(By.XPATH,'//input[@id="usuario"]')
         sleep(1)
         login.send_keys('HELPTECHSFA')
 
-# - Digitar senha
+# Digitar senha
         senha = driver.find_element(By.XPATH, '//input[@name="senha"]')
         sleep(1)
         senha.send_keys('HELPTECHSFA')
 
-# - Clicar em IR
+# Clicar em IR
         wait = WebDriverWait(driver, 10)
         botao_ir = wait.until(EC.element_to_be_clickable((By.NAME, "logar")))
 
         driver.execute_script("arguments[0].click();", botao_ir)
         sleep(2)
 
-# - Clicar em ORDENS/CARTEIRA DE SERVICOS
+# Clicar em ORDENS/CARTEIRA DE SERVICOS
         log("Acessando menu de Ordens")
         ordens_menu = WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.XPATH, '//a[@title="Ordens"]'))
         )
 
-# - Hover (passa o mouse) sobre "Ordens"
+# Hover (passa o mouse) sobre "Ordens"
         actions = ActionChains(driver)
         actions.move_to_element(ordens_menu).pause(1).perform()  # A pausa ajuda o menu a aparecer
 
-# - Espera a "Carteira de Serviços" aparecer no submenu
+# Espera a "Carteira de Serviços" aparecer no submenu
         carteira_servicos = WebDriverWait(driver, 10).until(
         EC.visibility_of_element_located((By.XPATH, '//a[@title="Carteira de Serviços"]'))
         )
 
-# - Clica com JavaScript para garantir
+# Clica com JavaScript para garantir
         driver.execute_script("arguments[0].click();", carteira_servicos)
 
         sleep(2)
 
         log("Abrindo nova ordem de serviço")
-# - Clicar em ABRIR NOVA ORDEM
+# Clicar em ABRIR NOVA ORDEM
         botao_abrir_ordem = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.XPATH, '//a[contains(@href, "abre_janela_apontaosplan")]'))
         )
         botao_abrir_ordem.click()
 
-# - clicar na janela de lancamento
+# Clica na janela de lancamento
         driver.switch_to.window(driver.window_handles[-1])
 
         sleep(5)
 
-# - Extrair informacoes da planilha
+# Extrai informacoes da planilha
         log("Lendo planilha Excel")
-        OSP = openpyxl.load_workbook('./ACOMPANHAMENTO SERVIÇOS MANUSIS.xlsx', data_only=True)
+        OSP = openpyxl.load_workbook('./ACOMPANHAMENTO SERVIÇOS MANUSIS.xlsx', data_only=False)
         pagina_OSP = OSP['LOGIX X MANUSIS-OSP']
 
     
 
-# - Capturar os nomes das colunas (cabeçalho)
+# Captura os nomes das colunas (cabeçalho)
         header = [cell.value for cell in next(pagina_OSP.iter_rows(min_row=1, max_row=1))]
         
-# - Atribui às variáveis os índices das colunas: status, número da OS, ordem electrolux, início e hora de início da execução
+# Atribui às variáveis os índices das colunas: status, número da OS, ordem electrolux, início e hora de início da execução
         idx_status = header.index("STATUS MANUSIS")
         idx_num_os = header.index("num_os")
         
     
-# - Cria um dicionário para agrupar as ordens de serviço (OS) com status "PENDENTE"
-# - Cada OS serve como chave, e seu valor é uma lista com todas as linhas (colaboradores) associadas a ela
+# Cria um dicionário para agrupar as ordens de serviço (OS) com status "PENDENTE"
+# Cada OS serve como chave, e seu valor é uma lista com todas as linhas (colaboradores) associadas a ela
         ordens_agrupadas = defaultdict(list)
         for linha in pagina_OSP.iter_rows(min_row=2, values_only=True):
             if linha [idx_status] == "PENDENTE":
                     ordens_agrupadas[linha[idx_num_os]].append(linha)
 
-# - Para cada número de OS, ordena os colaboradores pela data e hora de início de execução real
-# - Garante que o colaborador com o início mais cedo seja o primeiro da lista
-# - Faz tratamento caso as células estejam como string ou datetime                
-
+# Para cada número de OS, verifica se há grupos distintos e chama lancar_ordem_para_grupo
         for num_os, linhas in ordens_agrupadas.items():
 
             def safe_str_strip(value):
                 return str(value).strip() if value is not None else ""
-            
+ # Agrupa por valor de "GRUPO" em cada linha            
             grupos_distintos = set(safe_str_strip(linha[header.index("GRUPO")]) for linha in linhas)
 
             if len(grupos_distintos) > 1:
@@ -380,7 +399,7 @@ def enviar_relatorio_manusis():
      msg['From'] = email_remetente
      msg['To'] = ', '.join(destinatarios)
      msg.set_content('Prezados,\n\nInformo que o relatório Manusis OSP foi atualizado com novos lançamentos.\n\nAtenciosamente,\nAutomação Python')
-     
+# Anexa o arquivo Excel ao e-mail     
      with open(caminho_arquivo, 'rb') as f:
         conteudo = f.read()
         nome_arquivo = os.path.basename(caminho_arquivo)
@@ -395,6 +414,7 @@ def enviar_relatorio_manusis():
 
 
 if __name__ == "__main__":
+# Executa a automação e conta quantos lançamentos foram feitos    
     lancamentos_realizados = rodar_automacao(print)
     
     if lancamentos_realizados > 0:
