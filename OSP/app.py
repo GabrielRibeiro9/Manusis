@@ -18,6 +18,237 @@ from email.message import EmailMessage
 import ssl
 import os
 
+def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
+    lancamentos_realizados = 0
+    wait = WebDriverWait(driver, 10)
+
+    try:
+        driver.switch_to.window(driver.window_handles[0])
+        botao_abrir_ordem = wait.until(
+            EC.element_to_be_clickable((By.XPATH, '//a[contains(@href, "abre_janela_apontaosplan")]'))
+        )
+        botao_abrir_ordem.click()
+        WebDriverWait(driver, 10).until(lambda d: len(d.window_handles) > 1)
+        driver.switch_to.window(driver.window_handles[-1])
+        sleep(3)
+        grupo_raw = linhas[0][header.index("GRUPO")]
+        if grupo_raw is None or str(grupo_raw).strip() == "":
+            raise ValueError(f"Grupo inválido detectado na OSP {num_os}, linhas: {len(linhas)}")
+        grupo = str(grupo_raw).strip()
+        log(f"Nova ordem para OSP {num_os} sendo aberta para grupo {grupo}.")
+        lancamentos_realizados += 1
+
+ # Ordena colaboradores pela data e hora de início
+        linhas_ordenadas = sorted(
+            linhas,
+            key=lambda l: (
+                l[header.index("ini_exec_real")] if isinstance(l[header.index("ini_exec_real")], datetime)
+                else datetime.strptime(str(l[header.index("ini_exec_real")]), "%d/%m/%Y"),
+                l[header.index("hor_ini_real")] if isinstance(l[header.index("hor_ini_real")], datetime)
+                else datetime.strptime(str(l[header.index("hor_ini_real")]).strip() + ":00"
+                                      if len(str(l[header.index("hor_ini_real")]).strip().split(':')) == 2
+                                      else str(l[header.index("hor_ini_real")]), "%H:%M:%S")
+            )
+        )
+
+        base = linhas_ordenadas[0]
+        ini_exec_real = base[header.index("ini_exec_real")]
+        hor_ini_real = base[header.index("hor_ini_real")]
+        patrimonio = base[header.index("PATRIMONIO_ELECTROLUX")]
+        re = base[header.index("RE")]
+        des_servico = base[header.index("des_servico")]
+        falha = str(base[header.index("FALHA")] or "").strip()
+        defeito = str(base[header.index("DEFEITO")] or "").strip()
+        solucao = str(base[header.index("SOLUCAO")] or "").strip()
+
+        colaborador_base = base[header.index("COLABORADOR")]
+        log(f"Base da OSP {num_os}, grupo {grupo}: colaborador {colaborador_base} - {ini_exec_real.strftime('%d/%m/%Y')} {hor_ini_real}")
+
+        # Preenche DATA_PROG, DATA_ABRE, HORA_ABRE com o colaborador base
+        data_prog = wait.until(EC.presence_of_element_located((By.ID, "DATA_PROG")))
+        data_prog.click()
+        data_prog.send_keys(Keys.CONTROL + "a")
+        data_prog.send_keys(Keys.DELETE)
+        data_prog.send_keys(ini_exec_real.strftime("%d/%m/%Y"))
+
+        data_abre = wait.until(EC.presence_of_element_located((By.ID, "DATA_ABRE")))
+        data_abre.click()
+        data_abre.send_keys(Keys.CONTROL + "a")
+        data_abre.send_keys(Keys.DELETE)
+        data_abre.send_keys(ini_exec_real.strftime("%d/%m/%Y"))
+
+        hora_abre = wait.until(EC.presence_of_element_located((By.ID, "cc[HORA_ABRE]")))
+        hora_abre.click()
+        hora_abre.send_keys(Keys.CONTROL + "a")
+        hora_abre.send_keys(Keys.DELETE)
+        hora_abre.send_keys(hor_ini_real.strftime("%H:%M:%S"))
+
+        # Patrimonio e seleção da máquina
+        patrimonio_input = driver.find_element(By.ID, "campo_filtro_cc[MID_MAQUINA]")
+        patrimonio_input.clear()
+        patrimonio_input.send_keys(str(patrimonio))
+        log(f"Patrimônio encontrado: {patrimonio}")
+        patrimonio_input.send_keys(Keys.ENTER)
+        sleep(1)
+        patrimonio_input.send_keys(Keys.ENTER)
+
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, '//select[@id="cc[MID_MAQUINA]"]/option[not(@value="0")]'))
+        )
+        sleep(2)
+
+        select_maquina = Select(driver.find_element(By.ID, "cc[MID_MAQUINA]"))
+        select_maquina.select_by_index(1)
+        sleep(2)
+
+        driver.find_element(By.ID, "cc[SOLICITANTE]").send_keys("MANUFATURA")
+        sleep(2)
+        driver.find_element(By.ID, "cc[RESPONSAVEL]").send_keys(str(re))
+        sleep(2)
+        driver.find_element(By.ID, "cc[TIPO_SERVICO]").send_keys("PREVENTIVA")
+        sleep(2)
+        driver.find_element(By.ID, "cc[NATUREZA]").send_keys("3")
+        sleep(2)
+        driver.find_element(By.ID, "cc[MID_PRIORIDADE]").send_keys("NORMAL")
+        sleep(2)
+        driver.find_element(By.ID, "cc[TEXTO]").send_keys("PREVENTIVA")
+        sleep(2)
+        driver.find_element(By.ID, "cc[SOLUCAO_TEXTO]").send_keys(str(des_servico))
+        sleep(2)
+
+        def selecionar_opcao_parcial(select_element, texto_planilha):
+            for option in select_element.options:
+                if texto_planilha.strip().lower() in option.text.strip().lower():
+                    select_element.select_by_visible_text(option.text)
+                    return option.text
+            raise ValueError(f"Opção '{texto_planilha}' não encontrada no dropdown.")
+
+        try:
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cc[CAUSA]")))
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cc[DEFEITO]")))
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cc[SOLUCAO]")))
+
+            select_falha = Select(driver.find_element(By.ID, "cc[CAUSA]"))
+            sleep(1)
+            select_defeito = Select(driver.find_element(By.ID, "cc[DEFEITO]"))
+            sleep(1)
+            select_solucao = Select(driver.find_element(By.ID, "cc[SOLUCAO]"))
+            sleep(1)
+
+            selecionar_opcao_parcial(select_falha, falha)
+            sleep(1)
+            selecionar_opcao_parcial(select_defeito, defeito)
+            sleep(1)
+            selecionar_opcao_parcial(select_solucao, solucao)
+            sleep(1)
+
+        except Exception as e:
+            log(f"Erro ao selecionar opções do dropdown: {e}")
+
+        sleep(0.5)
+
+        # Lançar todos colaboradores do grupo
+        for linha in linhas:
+            status = linha[header.index("STATUS MANUSIS")]
+            grupo_linha = str(linha[header.index("GRUPO")]).strip()
+            if status == "PENDENTE" and grupo_linha == grupo:
+                colaborador = linha[header.index("COLABORADOR")]
+                ini_exec_real = linha[header.index("ini_exec_real")]
+                hor_ini_real = linha[header.index("hor_ini_real")]
+                fim_exec_real = linha[header.index("fim_exec_real")]
+
+                driver.find_element(By.ID, "func").send_keys(str(colaborador))
+                sleep(1)
+                driver.find_element(By.ID, "fdatai").clear()
+                driver.find_element(By.ID, "fdatai").send_keys(ini_exec_real.strftime("%d/%m/%Y"))
+                sleep(1)
+                driver.find_element(By.ID, "fhorai").clear()
+                driver.find_element(By.ID, "fhorai").send_keys(f"{str(hor_ini_real)}:00" if len(str(hor_ini_real)) <= 5 else str(hor_ini_real))
+                sleep(1)
+                driver.find_element(By.ID, "fdataf").clear()
+                driver.find_element(By.ID, "fdataf").send_keys(ini_exec_real.strftime("%d/%m/%Y"))
+                sleep(1)
+                driver.find_element(By.ID, "fhoraf").clear()
+                driver.find_element(By.ID, "fhoraf").send_keys(f"{str(fim_exec_real)}:00" if len(str(fim_exec_real)) <= 5 else str(fim_exec_real))
+                sleep(2)
+
+                botao_gravar = wait.until(
+                    EC.element_to_be_clickable((By.XPATH, "//input[@type='button' and @value='Gravar' and contains(@onclick, '4&di')]"))
+                )
+                botao_gravar.click()
+                log(f"Gravado colaborador {colaborador}")
+                sleep(2)
+
+                try:
+                    WebDriverWait(driver, 3).until(
+                        EC.visibility_of_element_located((By.XPATH, "//*[contains(text(), 'Esse Funcionário já possui apontamento nesse período')]"))
+                    )
+                    log(f"Conflito detectado! Ajustando hora final de {colaborador}")
+
+                    hora_corrigida = (
+                        hor_ini_real + timedelta(seconds=1)
+                        if isinstance(hor_ini_real, datetime)
+                        else datetime.strptime(str(hor_ini_real), "%H:%M:%S") + timedelta(seconds=1)
+                    )
+                    fhorai_input = driver.find_element(By.ID, "fhorai")
+                    fhorai_input.clear()
+                    fhorai_input.send_keys(hora_corrigida.strftime("%H:%M:%S"))
+
+                    botao_gravar = wait.until(
+                        EC.element_to_be_clickable((By.XPATH, "//input[@type='button' and @value='Gravar' and contains(@onclick, '4&di')]"))
+                    )
+                    botao_gravar.click()
+                    sleep(2)
+
+                    log(f"Gravado colaborador {colaborador} após ajuste de horário")
+
+                except TimeoutException:
+                    log(f"Lançamento sem conflitos para {colaborador}")
+                    sleep(2)
+
+        # Salvar a ordem
+        try:
+            botao_salvar_ordem = wait.until(
+                EC.element_to_be_clickable((By.NAME, "gravaos"))
+            )
+            botao_salvar_ordem.click()
+            log(f"Ordem de serviço {num_os} salva com sucesso")
+            sleep(3)
+        except Exception as e:
+            log(f"Erro ao tentar salvar a OSP {num_os}: {e}")
+
+        # Pegar número da ordem gerada
+        num_ordem_input = wait.until(EC.presence_of_element_located((By.ID, "osnum")))
+        num_ordem = num_ordem_input.get_attribute("value")
+        log(f"OSP gerada com sucesso: {num_ordem}")
+
+        # Atualizar planilha
+        OSP = openpyxl.load_workbook('./ACOMPANHAMENTO SERVIÇOS MANUSIS.xlsx', data_only=False)
+        pagina_OSP = OSP['LOGIX X MANUSIS-OSP']
+        for i, row in enumerate(pagina_OSP.iter_rows(min_row=2), start=2):
+            if row[header.index("num_os")].value == num_os and str(row[header.index("GRUPO")].value).strip() == grupo:
+                pagina_OSP.cell(row=i, column=header.index("ORDEM ELECTROLUX") + 1).value = num_ordem
+                pagina_OSP.cell(row=i, column=header.index("STATUS MANUSIS") + 1).value = "REALIZADO"
+        OSP.save('./ACOMPANHAMENTO SERVIÇOS MANUSIS.xlsx')
+
+        # Fecha ordem
+        checkbox_fecha_os = wait.until(EC.element_to_be_clickable((By.NAME, "fechaos")))
+        checkbox_fecha_os.click()
+        log("Checkbox 'Fechar OS' marcada.")
+
+        wait.until(EC.text_to_be_present_in_element_value((By.NAME, "gravaos"), "Fechar OS"))
+
+        botao_salvar_ordem = wait.until(EC.element_to_be_clickable((By.NAME, "gravaos")))
+        botao_salvar_ordem.click()
+        log("Botão 'Fechar OS' clicado com sucesso.")
+
+        driver.switch_to.window(driver.window_handles[0])
+
+    except Exception as e:
+        log(f"Erro no lançamento do grupo: {e}")
+
+    return lancamentos_realizados
+
 
 # Abre o site do Manusis
 def rodar_automacao(log):
@@ -95,308 +326,42 @@ def rodar_automacao(log):
 
 # - Capturar os nomes das colunas (cabeçalho)
         header = [cell.value for cell in next(pagina_OSP.iter_rows(min_row=1, max_row=1))]
-        indice_status = header.index("STATUS MANUSIS")  # índice da coluna Status
-
+        
 # - Atribui às variáveis os índices das colunas: status, número da OS, ordem electrolux, início e hora de início da execução
         idx_status = header.index("STATUS MANUSIS")
         idx_num_os = header.index("num_os")
-        idx_ini_exec_real = header.index("ini_exec_real")
-        idx_hor_ini_real = header.index("hor_ini_real")
-        idx_ordem_electrolux = header.index("ORDEM ELECTROLUX")
+        
     
 # - Cria um dicionário para agrupar as ordens de serviço (OS) com status "PENDENTE"
 # - Cada OS serve como chave, e seu valor é uma lista com todas as linhas (colaboradores) associadas a ela
         ordens_agrupadas = defaultdict(list)
         for linha in pagina_OSP.iter_rows(min_row=2, values_only=True):
-            if linha[idx_status] == "PENDENTE":
-                ordens_agrupadas[linha[idx_num_os]].append(linha)
+            if linha [idx_status] == "PENDENTE":
+                    ordens_agrupadas[linha[idx_num_os]].append(linha)
 
 # - Para cada número de OS, ordena os colaboradores pela data e hora de início de execução real
 # - Garante que o colaborador com o início mais cedo seja o primeiro da lista
 # - Faz tratamento caso as células estejam como string ou datetime                
 
         for num_os, linhas in ordens_agrupadas.items():
+
+            def safe_str_strip(value):
+                return str(value).strip() if value is not None else ""
             
-            try:
+            grupos_distintos = set(safe_str_strip(linha[header.index("GRUPO")]) for linha in linhas)
 
-                driver.switch_to.window(driver.window_handles[0])
-
-                botao_abrir_ordem = WebDriverWait(driver, 10).until(
-                      EC.element_to_be_clickable((By.XPATH, '//a[contains(@href, "abre_janela_apontaosplan")]'))
-                )
-                botao_abrir_ordem.click()
-                WebDriverWait(driver, 10).until(lambda d: len(d.window_handles) > 1)
-                driver.switch_to.window(driver.window_handles[-1])
-                sleep(3)
-                log("Nova ordem sendo aberta.")
-                lancamentos_realizados += 1
-
-               
-            
-            except Exception as e: 
-                 log(f"Erro ao abrir janela de lançamento: {e}")
-                 continue
-            
-            
-            linhas_ordenadas = sorted(
-                linhas,
-                key=lambda l: (
-                    l[idx_ini_exec_real] if isinstance(l[idx_ini_exec_real], datetime)
-                    else datetime.strptime(str(l[idx_ini_exec_real]), "%d/%m/%Y"),
-                    l[idx_hor_ini_real] if isinstance(l[idx_hor_ini_real], datetime)
-                    else datetime.strptime(str(l[idx_hor_ini_real]).strip() + ":00"
-                                        if len(str(l[idx_hor_ini_real]).strip().split(':')) == 2
-                                        else str(l[idx_hor_ini_real]), "%H:%M:%S")
-                )
-            )
-# - Atribui as variáveis com base na linha do colaborador com início mais cedo
-# - (usado como base para abrir a OSP)
-# - Extrai: data/hora, patrimônio, RE, grupo, descrição, falha, defeito e solução
-
-            base = linhas_ordenadas[0]
-            ini_exec_real = base[idx_ini_exec_real]
-            hor_ini_real = base[idx_hor_ini_real]
-            patrimonio = base[header.index("PATRIMONIO_ELECTROLUX")]
-            re = base[header.index("RE")]
-            des_servico = base[header.index("des_servico")]
-            grupo = str(base[header.index("GRUPO")]).strip()
-            falha = str(base[header.index("FALHA")] or "").strip()
-            defeito = str(base[header.index("DEFEITO")] or "").strip()
-            solucao = str(base[header.index("SOLUCAO")] or "").strip()
-
-# - Mostra no log qual OSP está sendo processada e qual colaborador foi usado como base (data/hora de início)
-            log(f"Base da OSP {num_os}: colaborador {base[header.index('COLABORADOR')]} - {ini_exec_real.strftime('%d/%m/%Y')} {hor_ini_real}")
-
-# - Preenche os campos de DATA_PROG, DATA_ABRE e HORA_ABRE com a data/hora de início de execução
-# - Garante que os campos estejam limpos antes de inserir os novos valores
-            wait = WebDriverWait(driver, 10)
-            data_prog = wait.until(EC.presence_of_element_located((By.ID, "DATA_PROG")))
-            data_prog.click()
-            data_prog.send_keys(Keys.CONTROL + "a")
-            data_prog.send_keys(Keys.DELETE)
-            data_prog.send_keys(ini_exec_real.strftime("%d/%m/%Y"))
-
-            data_abre = wait.until(EC.presence_of_element_located((By.ID, "DATA_ABRE")))
-            data_abre.click()
-            data_abre.send_keys(Keys.CONTROL + "a")
-            data_abre.send_keys(Keys.DELETE)
-            data_abre.send_keys(ini_exec_real.strftime("%d/%m/%Y"))
-
-            hora_abre = wait.until(EC.presence_of_element_located((By.ID, "cc[HORA_ABRE]")))
-            hora_abre.click()
-            hora_abre.send_keys(Keys.CONTROL + "a")
-            hora_abre.send_keys(Keys.DELETE)
-            hora_abre.send_keys(hor_ini_real.strftime("%H:%M:%S"))
-
-
-# - Cola o patrimonio e da enter 2 vezes e em ferramentas ele clica no primeiro que aparece
-        
-            patrimonio_input = driver.find_element(By.ID, "campo_filtro_cc[MID_MAQUINA]")
-            patrimonio_input.clear()
-            patrimonio_input.send_keys(str(patrimonio))
-            log(f"Patrimônio encontrado: {patrimonio}")
-            patrimonio_input.send_keys(Keys.ENTER)
-            sleep(1)
-            patrimonio_input.send_keys(Keys.ENTER)
-
-# - Aguarda o carregamento do select de máquinas com pelo menos uma opção válida 
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, '//select[@id="cc[MID_MAQUINA]"]/option[not(@value="0")]'))
-            )
-
-            sleep(2)
-
-# - Seleciona a primeira opção diferente de "0" no select, para selecionar a maquina
-            select_maquina = Select(driver.find_element(By.ID, "cc[MID_MAQUINA]"))
-# - Indice 1 pula a opção vazia (índice 0)
-            select_maquina.select_by_index(1)  
-            sleep(2)
-# - Insere MANUFATURA em solicitante
-            driver.find_element(By.ID,"cc[SOLICITANTE]").send_keys("MANUFATURA")
-            sleep(2)
-# - Insere o RE em RESPONSAVEL	
-            driver.find_element(By.ID, "cc[RESPONSAVEL]").send_keys(str(re))
-            sleep(2)  
-# - Insere PREVENTIVA no tipo do servico 
-            driver.find_element(By.ID, "cc[TIPO_SERVICO]").send_keys("PREVENTIVA")
-            sleep(2)
-# - Insere em natureza o numero 3
-            driver.find_element(By.ID, "cc[NATUREZA]").send_keys("3")
-            sleep(2)
-# - Insere NORMAL em prioridade
-            driver.find_element(By.ID, "cc[MID_PRIORIDADE]").send_keys("NORMAL")
-            sleep(2)
-# - Insere PREVENTIVA em descricao
-            driver.find_element(By.ID, "cc[TEXTO]").send_keys("PREVENTIVA")
-            sleep(2)
-# - Insere o servico executado
-            driver.find_element(By.ID, "cc[SOLUCAO_TEXTO]").send_keys(str(des_servico))
-            sleep(2)
-   
-       
-# - Função que seleciona a opção de um dropdown com base em uma correspondência parcial do texto da planilha
-# - Aguarda os campos de falha, defeito e solução estarem visíveis antes de preencher
-            def selecionar_opcao_parcial(select_element, texto_planilha):
-    
-                for option in select_element.options:
-                    if texto_planilha.strip().lower() in option.text.strip().lower():
-                        select_element.select_by_visible_text(option.text)
-                        return option.text
-                raise ValueError(f"Opção '{texto_planilha}' não encontrada no dropdown.")
-
-            try:
-# - Aguarda os selects aparecerem
-                WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cc[CAUSA]")))
-                WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cc[DEFEITO]")))
-                WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cc[SOLUCAO]")))
-
-# - Cria objetos Select para os campos de Causa, Defeito e Solução
-# - Esses objetos permitem selecionar opções nos menus suspensos da interface
-                select_falha = Select(driver.find_element(By.ID, "cc[CAUSA]"))
-                sleep(1)
-                select_defeito = Select(driver.find_element(By.ID, "cc[DEFEITO]"))
-                sleep(1)
-                select_solucao = Select(driver.find_element(By.ID, "cc[SOLUCAO]"))
-                sleep(1)
-
-# - Seleciona opções com correspondência parcial dos textos CAUSA, DEFEITO E SOLUCAO da planilha
-                falha_selecionada = selecionar_opcao_parcial(select_falha, falha)
-                sleep(1)
-                defeito_selecionado = selecionar_opcao_parcial(select_defeito, defeito)
-                sleep(1)
-                solucao_selecionada = selecionar_opcao_parcial(select_solucao, solucao)
-                sleep(1)
-
-
-            except Exception as e:
-                    print(f"Erro ao selecionar opções do dropdown: {e}")
-
-
-        
-            sleep(0.5)
-
-
-# - Percorre a planilha para encontrar outros colaboradores com status "PENDENTE" vinculados à mesma OSP já lançada
-            for outra_linha in pagina_OSP.iter_rows(min_row=2, values_only=True):
-                outro_status = outra_linha[indice_status]
-                outro_num_os = outra_linha[header.index("num_os")]
-# - Se a linha tiver status "PENDENTE" e for da mesma OSP já em processo de lançamento,
-#   extrai os dados do colaborador, incluindo data/hora de início e fim da execução
-                if outro_status == "PENDENTE" and outro_num_os == num_os:
-                    colaborador = outra_linha[header.index("COLABORADOR")]
-                    ini_exec_real = outra_linha[header.index("ini_exec_real")]
-                    hor_ini_real = outra_linha[header.index("hor_ini_real")]
-                    fim_exec_real = outra_linha[header.index("fim_exec_real")]
- 
-
-# - Insere o nome do colaborador                    
-                    driver.find_element(By.ID,"func").send_keys(str(colaborador))
-                    sleep(1)
-# - Limpa e insere a data de início da execução                    
-                    driver.find_element(By.ID, "fdatai").clear()
-                    driver.find_element(By.ID, "fdatai").send_keys(ini_exec_real.strftime("%d/%m/%Y"))
-                    sleep(1)
-# - Limpa e insere a hora de início da execução                    
-                    driver.find_element(By.ID, "fhorai").clear()
-                    driver.find_element(By.ID, "fhorai").send_keys(f"{str(hor_ini_real)}:00" if len(str(hor_ini_real)) <= 5 else str(hor_ini_real))
-                    sleep(1)
-# - Limpa e insere a data de fim da execução (mesma da inicial)                    
-                    driver.find_element(By.ID, "fdataf").clear()
-                    driver.find_element(By.ID, "fdataf").send_keys(ini_exec_real.strftime("%d/%m/%Y"))
-                    sleep(1)
-# - Limpa e insere a hora de fim da execução                    
-                    driver.find_element(By.ID, "fhoraf").clear()
-                    driver.find_element(By.ID, "fhoraf").send_keys(f"{str(fim_exec_real)}:00" if len(str(fim_exec_real)) <= 5 else str(fim_exec_real))
-                    sleep(2)
-
-
-
-# - Clicar em gravar conforme horas da planilha
-                    botao_gravar = WebDriverWait(driver, 10).until(
-                        EC.element_to_be_clickable((By.XPATH, "//input[@type='button' and @value='Gravar' and contains(@onclick, '4&di')]"))
-                    )
-                    botao_gravar.click()
-                    log(f"Gravado colaborador {colaborador}")
-                    sleep(2)
-
-
-                    try:
-# - Verifica se apareceu a mensagem de erro de sobreposicao de horarios                
-                        WebDriverWait(driver, 3).until(
-                             EC.visibility_of_element_located((By.XPATH,"//*[contains(text(), 'Esse Funcionário já possui apontamento nesse período')]" ))
-                        )
-                        log(f"Conflito detectado! Ajustando hora final de {colaborador}")
-
-# - Corrige a hora inicial adicionando + 1s 
-                        hora_corrigida = (
-                            hor_ini_real + timedelta(seconds=1)
-                            if isinstance (hor_ini_real, datetime)
-                            else datetime.strptime(str(hor_ini_real), "%H:%M:%S") + timedelta(seconds=1)
-                        )
-
-                        fhorai_input = driver.find_element(By.ID, "fhorai")
-                        fhorai_input.clear()
-                        fhorai_input.send_keys(hora_corrigida.strftime("%H:%M:%S"))
-
-                        botao_gravar = WebDriverWait(driver, 10).until(
-                            EC.element_to_be_clickable((By.XPATH,"//input[@type='button' and @value='Gravar' and contains(@onclick, '4&di')]" ))
-                        )   
-                        botao_gravar.click()
-                        sleep(2)
-
-                        log(f"Gravado colaborador {colaborador} após ajuste de horário")    
-
-                    except TimeoutException:
-                        log(f"Lançamento sem conflitos para {colaborador}")
-                        sleep(2)
-
-# - Clica no botao SALVAR ORDEM DE SERVICO
-            try:
-                     
-                botao_salvar_ordem = wait.until(
-                    EC.element_to_be_clickable((By.NAME, "gravaos"))
-                )
-                botao_salvar_ordem.click()
-                log(f"Ordem de serviço {num_os} salva com sucesso") 
-                sleep(3)
-            except Exception as e:
-                log(f"Erro ao tentar salvar a OSP {num_os}: {e}")
-
-# - Clica no numero gerao da ORDEM ELECTROLUX e copia o valor
-            num_ordem_input = wait.until(EC.presence_of_element_located((By.ID, "osnum")))
-            num_ordem = num_ordem_input.get_attribute("value")
-            log(f"OSP gerada com sucesso: {num_ordem}")
-
-    
-# - Percorre todas as linhas da planilha, e para cada linha com o mesmo número de OS (num_os),
-#   preenche a coluna ORDEM ELECTROLUX com o número gerado e atualiza o status para "REALIZADO"
-            for i, row in enumerate(pagina_OSP.iter_rows(min_row=2), start=2):
-                 if row[idx_num_os].value == num_os:
-                      pagina_OSP.cell(row=i, column=idx_ordem_electrolux + 1).value = num_ordem
-                      pagina_OSP.cell(row=i, column=idx_status + 1).value = "REALIZADO"
-# - Salva a planilha
-            OSP.save('./ACOMPANHAMENTO SERVIÇOS MANUSIS.xlsx')
-            lancamentos_realizados += 1
-
-# - Marca o checkbox fechar ordem 
-            checkbox_fecha_os = wait.until(
-                EC.element_to_be_clickable((By.NAME, "fechaos"))
-                )
-            checkbox_fecha_os.click()
-            log("Checkbox 'Fechar OS' marcada.")
-
-# - Aguarda o texto do botao Salvar Ordem de Servico mudar para Fechar OS, usando o valor gravaos           
-            wait.until(EC.text_to_be_present_in_element_value((By.NAME, "gravaos"), "Fechar OS")
-            )
-
-# - Clica no botao Fechar OS
-            botao_salvar_ordem = wait.until(EC.element_to_be_clickable((By.NAME, "gravaos")))
-            
-            botao_salvar_ordem.click()
-            log("Botão 'Fechar OS' clicado com sucesso.")
-            driver.switch_to.window(driver.window_handles[0])
+            if len(grupos_distintos) > 1:
+                print(f"OS: {num_os}, Grupos encontrados: {grupos_distintos}")
+                for grupo_atual in grupos_distintos:
+                    print(f"Processando grupo: '{grupo_atual}'")
+                    linhas_grupo = [linha for linha in linhas if str(linha[header.index("GRUPO")]).strip() == grupo_atual]
+                    print(f"Linhas nesse grupo: {len(linhas_grupo)}")
+                    lancamentos_realizados += lancar_ordem_para_grupo(driver, log, num_os, linhas_grupo, header)
+            else:
+                lancamentos_realizados += lancar_ordem_para_grupo(driver, log, num_os, linhas, header)
 
         return lancamentos_realizados
+
 
 def enviar_relatorio_manusis():
      
@@ -420,7 +385,6 @@ def enviar_relatorio_manusis():
         conteudo = f.read()
         nome_arquivo = os.path.basename(caminho_arquivo)
         msg.add_attachment(conteudo, maintype ='application', subtype='vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename=nome_arquivo)
-
         try:
           with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
                smtp.login(email_remetente, senha_app)
