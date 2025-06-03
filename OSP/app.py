@@ -105,22 +105,22 @@ def lancar_ordem_para_grupo(driver, log, num_os, linhas, header):
 
         select_maquina = Select(driver.find_element(By.ID, "cc[MID_MAQUINA]"))
         select_maquina.select_by_index(1)
-        sleep(2)
+        sleep(1)
 # Preenche informações fixas na OS
         driver.find_element(By.ID, "cc[SOLICITANTE]").send_keys("MANUFATURA")
-        sleep(2)
+        sleep(1)
         driver.find_element(By.ID, "cc[RESPONSAVEL]").send_keys(str(re))
-        sleep(2)
+        sleep(1)
         driver.find_element(By.ID, "cc[TIPO_SERVICO]").send_keys("PREVENTIVA")
-        sleep(2)
+        sleep(1)
         driver.find_element(By.ID, "cc[NATUREZA]").send_keys("3")
-        sleep(2)
+        sleep(1)
         driver.find_element(By.ID, "cc[MID_PRIORIDADE]").send_keys("NORMAL")
-        sleep(2)
+        sleep(1)
         driver.find_element(By.ID, "cc[TEXTO]").send_keys("PREVENTIVA")
-        sleep(2)
+        sleep(1)
         driver.find_element(By.ID, "cc[SOLUCAO_TEXTO]").send_keys(str(des_servico))
-        sleep(2)
+        sleep(1)
 
         def selecionar_opcao_parcial(select_element, texto_planilha):
 # Percorre as opções de um <select> e seleciona aquela cujo texto
@@ -337,11 +337,11 @@ def rodar_automacao(log):
 # Clica na janela de lancamento
         driver.switch_to.window(driver.window_handles[-1])
 
-        sleep(5)
+        sleep(3)
 
 # Extrai informacoes da planilha
         log("Lendo planilha Excel")
-        OSP = openpyxl.load_workbook('./ACOMPANHAMENTO SERVIÇOS MANUSIS.xlsx', data_only=False)
+        OSP = openpyxl.load_workbook('./ACOMPANHAMENTO SERVIÇOS MANUSIS.xlsx', data_only=True)
         pagina_OSP = OSP['LOGIX X MANUSIS-OSP']
 
     
